@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LuckyLoop – Live Data</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --green:  #00ff90;
+            --green2: #00cc72;
+            --bg:     #0a0a0a;
+            --bg2:    #0d0d0d;
+            --bg3:    #111111;
+            --bg4:    #161616;
+            --border: #1e1e1e;
+            --text:   #d0d0d0;
+            --muted:  #555;
+            --cyan:   #00e5ff;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Courier New', monospace;
+            min-height: 100vh;
+        }
+
+        /* ══════════════════════════════════════
+           LOCK SCREEN
+        ══════════════════════════════════════ */
+        #lockScreen {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: radial-gradient(ellipse at center, #0a1a1f 0%, #050a0d 100%);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #lockScreen.active { display: flex; }
+
+        .lock-box {
+            background: #0e0e0e;
+            border: 1px solid #1a2a2a;
+            border-top: 3px solid var(--cyan);
+            border-radius: 12px;
+            padding: 44px 40px 36px;
+            width: 100%;
+            max-width: 380px;
+            text-align: center;
+            box-shadow: 0 0 60px rgba(0,229,255,0.05);
+        }
+
+        .lock-icon {
+            font-size: 36px;
+            margin-bottom: 10px;
+        }
+
+        .lock-title {
+            font-size: 22px;
+            font-weight: bold;
+            color: #fff;
+            letter-spacing: 3px;
+            margin-bottom: 4px;
+        }
+
+        .lock-sub {
+            font-size: 11px;
+            color: var(--muted);
+            letter-spacing: 2px;
+            margin-bottom: 30px;
+        }
+
+        .lock-input {
+            width: 100%;
+            padding: 13px 16px;
+            background: #161616;
+            border: 1px solid #222;
+            border-radius: 7px;
+            color: #fff;
+            font-size: 15px;
+            font-family: 'Courier New', monospace;
+            outline: none;
+            transition: border-color .2s;
+            margin-bottom: 12px;
+            letter-spacing: 2px;
+        }
+
+        .lock-input:focus { border-color: var(--cyan); }
+        .lock-input.error { border-color: #ff4444; animation: shake .3s; }
+
+        @keyframes shake {
+            0%,100%{transform:translateX(0)}
+            25%{transform:translateX(-6px)}
+            75%{transform:translateX(6px)}
+        }
+
+        .lock-btn {
+            width: 100%;
+            padding: 13px;
+            background: var(--cyan);
+            border: none;
+            border-radius: 7px;
+            color: #000;
+            font-size: 14px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: background .2s, transform .1s;
+        }
+
+        .lock-btn:hover  { background: #00c8e0; }
+        .lock-btn:active { transform: scale(.98); }
+
+        .lock-error {
+            margin-top: 12px;
+            font-size: 12px;
+            color: #ff5555;
+            min-height: 18px;
+            letter-spacing: 1px;
+        }
+
+        .lock-footer {
+            margin-top: 28px;
+            font-size: 10px;
+            color: #1e1e1e;
+            letter-spacing: 1px;
+        }
+
+        /* ══════════════════════════════════════
+           MAIN DASHBOARD (same as before)
+        ══════════════════════════════════════ */
+        #mainApp { display: none; }
+        #mainApp.active { display: block; }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 28px;
+            background: var(--bg2);
+            border-bottom: 2px solid var(--green);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .brand {
+            font-size: 20px;
+            font-weight: bold;
+            color: var(--green);
+            letter-spacing: 1px;
+        }
+
+        .brand small {
+            font-size: 12px;
+            color: var(--muted);
+            font-weight: normal;
+            margin-left: 12px;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+        }
+
+        #liveDot {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--muted);
+        }
+
+        .dot.live {
+            background: var(--green);
+            animation: blink 1.4s infinite;
+        }
+
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+        .upload-link {
+            font-size: 12px;
+            padding: 6px 14px;
+            border: 1px solid #2a2a2a;
+            border-radius: 6px;
+            color: #888;
+            text-decoration: none;
+            transition: all .2s;
+        }
+        .upload-link:hover { border-color: var(--green); color: var(--green); }
+
+        .logout-btn {
+            font-size: 11px;
+            padding: 5px 12px;
+            border: 1px solid #2a2a2a;
+            border-radius: 6px;
+            color: #555;
+            background: transparent;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all .2s;
+        }
+        .logout-btn:hover { border-color: #ff4444; color: #ff4444; }
+
+        .stats {
+            display: flex;
+            gap: 14px;
+            padding: 22px 28px 0;
+            flex-wrap: wrap;
+        }
+
+        .stat {
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 22px;
+            min-width: 130px;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .6px;
+            color: var(--muted);
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: bold;
+            color: var(--green);
+            margin-top: 5px;
+            line-height: 1;
+        }
+
+        .content { padding: 22px 28px 40px; }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+
+        .section-title {
+            font-size: 15px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        #lastRefresh { font-size: 12px; color: var(--muted); }
+
+        .table-wrap {
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        thead th {
+            padding: 13px 16px;
+            background: var(--bg3);
+            color: var(--green);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .6px;
+            text-align: left;
+            border-bottom: 2px solid var(--green);
+            white-space: nowrap;
+        }
+
+        tbody tr {
+            border-bottom: 1px solid var(--border);
+            transition: background .15s;
+        }
+
+        tbody tr:last-child { border-bottom: none; }
+        tbody tr:hover { background: var(--bg4); }
+
+        tbody td { padding: 13px 16px; vertical-align: middle; }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 13px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 13px;
+        }
+
+        .avail-high { background: #003920; color: var(--green); }
+        .avail-mid  { background: #362500; color: #ffcc00; }
+        .avail-low  { background: #380000; color: #ff6060; }
+        .avail-zero { background: #181818; color: #444; }
+
+        .open-btn {
+            display: inline-block;
+            padding: 5px 14px;
+            background: var(--green);
+            color: #000;
+            font-weight: bold;
+            border-radius: 5px;
+            text-decoration: none;
+            font-size: 12px;
+            font-family: inherit;
+            transition: background .2s;
+        }
+        .open-btn:hover { background: var(--green2); }
+
+        .copy-btn {
+            padding: 5px 10px;
+            background: transparent;
+            border: 1px solid #2a2a2a;
+            border-radius: 5px;
+            color: #666;
+            cursor: pointer;
+            font-size: 11px;
+            font-family: inherit;
+            margin-left: 6px;
+            transition: all .2s;
+        }
+        .copy-btn:hover { border-color: var(--green); color: var(--green); }
+
+        .time-cell { color: #555; font-size: 12px; }
+        .num-cell  { color: #555; font-size: 12px; }
+        .pos-cell  { font-weight: bold; color: #ddd; }
+        .name-cell { font-weight: bold; color: #ccc; }
+
+        #emptyMsg {
+            padding: 60px;
+            text-align: center;
+            color: #2a2a2a;
+            font-size: 15px;
+            display: none;
+        }
+
+        #toast {
+            position: fixed; bottom: 28px; left: 50%;
+            transform: translateX(-50%);
+            background: var(--green); color: #000;
+            padding: 9px 22px; border-radius: 6px;
+            font-weight: bold; font-size: 13px;
+            opacity: 0; transition: opacity .3s;
+            pointer-events: none; z-index: 9999;
+        }
+
+        footer {
+            text-align: center;
+            padding: 22px;
+            color: #1e1e1e;
+            font-size: 12px;
+            border-top: 1px solid #111;
+        }
+    </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════
+     LOCK SCREEN
+══════════════════════════════════════ -->
+<div id="lockScreen">
+    <div class="lock-box">
+        <div class="lock-icon">⚡</div>
+        <div class="lock-title">LUCKYLOOP</div>
+        <div class="lock-sub">LIVE DATA · SECURE ACCESS</div>
+        <input
+            type="password"
+            id="pwInput"
+            class="lock-input"
+            placeholder="পাসওয়ার্ড দিন..."
+            autocomplete="current-password"
+            onkeydown="if(event.key==='Enter') doLogin()"
+        />
+        <button class="lock-btn" onclick="doLogin()">→ প্রবেশ করুন</button>
+        <div class="lock-error" id="lockError"></div>
+        <div class="lock-footer">LUCKYLOOP © 2024–2026 · Prince Alif</div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     MAIN APP
+══════════════════════════════════════ -->
+<div id="mainApp">
+
+<header>
+    <div class="brand">
+        🔸 LuckyLoop Live Data
+        <small>auto-refresh every 5s</small>
+    </div>
+    <div class="header-right">
+        <div id="liveDot">
+            <div class="dot" id="dot"></div>
+            <span id="liveText">Connecting…</span>
+        </div>
+        <a href="/" class="upload-link">⬆ Manual Upload</a>
+        <button class="logout-btn" onclick="doLogout()">⎋ Logout</button>
+    </div>
+</header>
+
+<div class="stats">
+    <div class="stat">
+        <div class="stat-label">Total Jobs</div>
+        <div class="stat-value" id="sTot">–</div>
+    </div>
+    <div class="stat">
+        <div class="stat-label">Has Slots</div>
+        <div class="stat-value" id="sAvail">–</div>
+    </div>
+    <div class="stat">
+        <div class="stat-label">Full / Zero</div>
+        <div class="stat-value" id="sFull">–</div>
+    </div>
+    <div class="stat" style="min-width:180px;">
+        <div class="stat-label">Last Sync</div>
+        <div class="stat-value" style="font-size:15px;margin-top:9px;" id="sSync">–</div>
+    </div>
+</div>
+
+<div class="content">
+    <div class="toolbar">
+        <div class="section-title">📊 Job Position Tracker</div>
+        <div id="lastRefresh">Fetching…</div>
+    </div>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Campaign</th>
+                    <th>Position</th>
+                    <th>Available</th>
+                    <th>Updated</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="tbody">
+                <tr>
+                    <td colspan="6" style="text-align:center;padding:40px;color:#2a2a2a;">
+                        Loading…
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <div id="emptyMsg">
+            ⚠️ No data yet.<br>
+            <span style="font-size:13px;color:#333;margin-top:8px;display:block;">
+                The extension will push data automatically when it detects jobs on MicroWorkers.
+            </span>
+        </div>
+    </div>
+</div>
+
+<footer>Created by Prince Alif &copy; LuckyLoop 2024–2026 &nbsp;|&nbsp; All rights reserved</footer>
+
+</div><!-- /mainApp -->
+
+<div id="toast"></div>
+
+<script>
+    // ── Server থেকে locked state পাওয়া ──────────────────────
+    const SERVER_LOCKED = {{ 'true' if locked else 'false' }};
+
+    // ── Init: lock screen দেখানো বা না দেখানো ───────────────
+    window.addEventListener('DOMContentLoaded', () => {
+        if (SERVER_LOCKED) {
+            document.getElementById('lockScreen').classList.add('active');
+            setTimeout(() => document.getElementById('pwInput').focus(), 100);
+        } else {
+            document.getElementById('mainApp').classList.add('active');
+            startDashboard();
+        }
+    });
+
+    // ── Login ────────────────────────────────────────────────
+    async function doLogin() {
+        const pw    = document.getElementById('pwInput').value;
+        const input = document.getElementById('pwInput');
+        const errEl = document.getElementById('lockError');
+
+        if (!pw) {
+            shakeInput();
+            errEl.textContent = '⚠ পাসওয়ার্ড খালি রাখবেন না';
+            return;
+        }
+
+        const btn = document.querySelector('.lock-btn');
+        btn.textContent = 'যাচাই করা হচ্ছে…';
+        btn.disabled = true;
+
+        try {
+            const res = await fetch('/viewer-login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: pw })
+            });
+
+            if (res.ok) {
+                // Success — show dashboard
+                document.getElementById('lockScreen').classList.remove('active');
+                document.getElementById('mainApp').classList.add('active');
+                startDashboard();
+            } else {
+                shakeInput();
+                errEl.textContent = '❌ ভুল পাসওয়ার্ড! আবার চেষ্টা করুন।';
+                document.getElementById('pwInput').value = '';
+                document.getElementById('pwInput').focus();
+            }
+        } catch (e) {
+            errEl.textContent = '⚠ Connection error. Retry.';
+        } finally {
+            btn.textContent = '→ প্রবেশ করুন';
+            btn.disabled = false;
+        }
+    }
+
+    function shakeInput() {
+        const input = document.getElementById('pwInput');
+        input.classList.add('error');
+        setTimeout(() => input.classList.remove('error'), 500);
+    }
+
+    // ── Logout ───────────────────────────────────────────────
+    function doLogout() {
+        window.location.href = '/viewer-logout';
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  DASHBOARD LOGIC
+    // ══════════════════════════════════════════════════════════
+
+    let refreshTimer = null;
+
+    function startDashboard() {
+        fetchData();
+        refreshTimer = setInterval(fetchData, 5000);
+    }
+
+    function esc(s) {
+        return String(s ?? '')
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+            .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function timeAgo(iso) {
+        if (!iso) return '–';
+        const fixed = iso.replace(' ', 'T').split('.')[0] + 'Z';
+        const s = (Date.now() - new Date(fixed)) / 1000;
+        if (s < 10)    return 'just now';
+        if (s < 60)    return Math.floor(s) + 's ago';
+        if (s < 3600)  return Math.floor(s / 60) + ' min ago';
+        if (s < 86400) return Math.floor(s / 3600) + ' hr ago';
+        return Math.floor(s / 86400) + ' day ago';
+    }
+
+    function availClass(n) {
+        const v = parseInt(n);
+        if (isNaN(v) || v <= 0) return 'avail-zero';
+        if (v >= 10) return 'avail-high';
+        if (v >= 5)  return 'avail-mid';
+        return 'avail-low';
+    }
+
+    function showToast(msg) {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.style.opacity = '1';
+        clearTimeout(t._t);
+        t._t = setTimeout(() => { t.style.opacity = '0'; }, 2000);
+    }
+
+    function copyLink(url) {
+        navigator.clipboard.writeText(url)
+            .then(() => showToast('✅ Link copied!'))
+            .catch(() => showToast('❌ Copy failed'));
+    }
+
+    async function fetchData() {
+        try {
+            const res = await fetch('/api/latest');
+
+            // Session শেষ হলে → lock screen এ ফিরে যাও
+            if (res.status === 401) {
+                clearInterval(refreshTimer);
+                document.getElementById('mainApp').classList.remove('active');
+                document.getElementById('lockScreen').classList.add('active');
+                document.getElementById('lockError').textContent = '⚠ Session শেষ। আবার লগিন করুন।';
+                setTimeout(() => document.getElementById('pwInput').focus(), 100);
+                return;
+            }
+
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+
+            const data = await res.json();
+            const rows = Array.isArray(data) ? data : (data.jobs || []);
+
+            document.getElementById('dot').classList.add('live');
+            document.getElementById('liveText').textContent = 'LIVE';
+            document.getElementById('lastRefresh').textContent =
+                'Last updated: ' + new Date().toLocaleTimeString();
+
+            const withSlots = rows.filter(r => parseInt(r.available) > 0).length;
+            document.getElementById('sTot').textContent   = rows.length;
+            document.getElementById('sAvail').textContent = withSlots;
+            document.getElementById('sFull').textContent  = rows.length - withSlots;
+            document.getElementById('sSync').textContent  = new Date().toLocaleTimeString();
+
+            const tbody   = document.getElementById('tbody');
+            const emptyEl = document.getElementById('emptyMsg');
+
+            if (!rows.length) {
+                tbody.innerHTML       = '';
+                emptyEl.style.display = 'block';
+                return;
+            }
+            emptyEl.style.display = 'none';
+
+            tbody.innerHTML = rows.map((r, i) => {
+                const avail = (r.available !== null && r.available !== '') ? r.available : '–';
+                const cls   = availClass(avail);
+                const link  = r.link ? `
+                    <a class="open-btn" href="${esc(r.link)}" target="_blank" rel="noopener">Open →</a>
+                    <button class="copy-btn" onclick="copyLink('${esc(r.link)}')">Copy</button>
+                ` : '<span style="color:#333">–</span>';
+
+                return `
+                    <tr>
+                        <td class="num-cell">${i + 1}</td>
+                        <td class="name-cell">${esc(r.job_name)}</td>
+                        <td class="pos-cell">${esc(r.position || '–')}</td>
+                        <td><span class="badge ${cls}">${esc(String(avail))}</span></td>
+                        <td class="time-cell">${timeAgo(r.updated_at)}</td>
+                        <td>${link}</td>
+                    </tr>
+                `;
+            }).join('');
+
+        } catch (e) {
+            document.getElementById('dot').classList.remove('live');
+            document.getElementById('liveText').textContent = '⚠ Error';
+            document.getElementById('lastRefresh').textContent =
+                'Failed at ' + new Date().toLocaleTimeString();
+            console.error('[LuckyLoop]', e);
+        }
+    }
+</script>
+</body>
+</html>
