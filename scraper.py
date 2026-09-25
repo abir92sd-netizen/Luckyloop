@@ -19,6 +19,7 @@ JOB_NAMES = [
 ]
 
 TARGET_URL = "https://www.microworkers.com/jobs.php?Filter=no&Sort=NEWEST&Id_category=09"
+EMPLOYER_URL = "https://www.microworkers.com/userinfo.php?Id=4b256e28"
 
 session = requests.Session()
 session.headers.update({
@@ -86,17 +87,92 @@ def push(cid, position, available, link):
     except Exception as e:
         print(f"[Scraper] Push error: {e}")
 
+# ══════════════════════════════════════════════════════
+# TASKS PAID TRACKER — প্রতি ১ মিনিটে scrape করবে
+# ══════════════════════════════════════════════════════
+
+def scrape_tasks_paid():
+    """microworkers.com/userinfo.php?Id=4b256e28 থেকে Tasks paid নাও"""
+    try:
+        r = session.get(EMPLOYER_URL, timeout=20)
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # "Tasks paid" row খুঁজো — HG Campaigns section এ
+        tasks_paid = None
+        rows = soup.select("table tr")
+        for row in rows:
+            cells = row.find_all(["th", "td"])
+            for i, cell in enumerate(cells):
+                if "Tasks paid" in cell.get_text():
+                    # পরের cell এ number আছে
+                    if i + 1 < len(cells):
+                        val = cells[i + 1].get_text(strip=True).replace(",", "").replace(".", "")
+                        if val.isdigit():
+                            tasks_paid = int(val)
+                            break
+            if tasks_paid is not None:
+                break
+
+        # Alternative: সব text থেকে খোঁজো
+        if tasks_paid is None:
+            text = soup.get_text()
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                if "Tasks paid" in line:
+                    # পরের non-empty line এ number থাকতে পারে
+                    for j in range(i+1, min(i+5, len(lines))):
+                        val = lines[j].strip().replace(",", "").replace(".", "")
+                        if val.isdigit() and len(val) > 4:
+                            tasks_paid = int(val)
+                            break
+                    if tasks_paid:
+                        break
+
+        if tasks_paid is None:
+            print("[TasksPaid] Could not find Tasks paid value")
+            return
+
+        print(f"[TasksPaid] Current: {tasks_paid:,}")
+
+        # Server এ push করো
+        try:
+            requests.post(f"{SERVER_URL}/api/tasks-paid", json={
+                "tasks_paid": tasks_paid
+            }, timeout=10)
+            print(f"[TasksPaid] Pushed: {tasks_paid:,}")
+        except Exception as e:
+            print(f"[TasksPaid] Push error: {e}")
+
+    except Exception as e:
+        print(f"[TasksPaid] Scrape error: {e}")
+
+
 def scrape_loop():
     print("[Scraper] Starting — checking at sec 2, 4, 33...")
     time.sleep(5)
     CHECK_SECONDS = {2, 4, 33}
     last_checked_sec = -1
+
+    # Tasks paid — আলাদা counter
+    last_tasks_paid_check = 0
+
     while True:
-        sec = datetime.now().second
+        now = datetime.now()
+        sec = now.second
+
+        # Jobs scrape — sec 2, 4, 33 এ
         if sec in CHECK_SECONDS and sec != last_checked_sec:
             last_checked_sec = sec
             print(f"[Scraper] Checking at :{sec:02d}")
             scrape_jobs()
+
+        # Tasks paid — প্রতি ৬০ সেকেন্ডে
+        current_time = time.time()
+        if current_time - last_tasks_paid_check >= 60:
+            last_tasks_paid_check = current_time
+            print(f"[TasksPaid] Checking at {now.strftime('%H:%M:%S')}")
+            scrape_tasks_paid()
+
         time.sleep(0.5)
 
 def start_scraper():
