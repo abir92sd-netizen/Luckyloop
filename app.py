@@ -79,6 +79,26 @@ def init_db():
         VALUES (1, 0, '', '')
     """)
 
+    # ── NEW: tasks_paid current value ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS tasks_paid_current (
+            id          INTEGER PRIMARY KEY,
+            tasks_paid  INTEGER DEFAULT 0,
+            updated_at  TEXT
+        )
+    """)
+    c.execute("INSERT OR IGNORE INTO tasks_paid_current (id, tasks_paid, updated_at) VALUES (1, 0, '')")
+
+    # ── NEW: tasks_paid change log ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS tasks_paid_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            tasks_paid  INTEGER,
+            diff        INTEGER,
+            logged_at   TEXT
+        )
+    """)
+
     # ── Migrate existing tables if columns missing ──
     cols = [row[1] for row in c.execute("PRAGMA table_info(jobs)")]
     if "updated_at" not in cols:
@@ -120,7 +140,6 @@ def generate_license_key(label=""):
 
 
 def days_remaining(expires_at_str):
-    """Return days remaining until expiry. None if no expiry set. Negative if expired."""
     if not expires_at_str:
         return None
     try:
@@ -189,6 +208,69 @@ def api_latest():
         "jobs":        [dict(r) for r in rows],
         "scraper_ok":  scraper_ok,
         "scraper_msg": scraper_msg
+    })
+
+
+# ══════════════════════════════════════════════════════════
+#  TASKS PAID API — নতুন
+# ══════════════════════════════════════════════════════════
+
+@app.route("/api/tasks-paid", methods=["POST"])
+def update_tasks_paid():
+    """scraper.py থেকে push হবে — Tasks paid বাড়লে log করবে"""
+    data = request.get_json(silent=True) or {}
+    new_val = data.get("tasks_paid")
+    if new_val is None:
+        return jsonify({"error": "tasks_paid required"}), 400
+    try:
+        new_val = int(new_val)
+    except:
+        return jsonify({"error": "invalid value"}), 400
+
+    now = datetime.now().isoformat()
+    conn = get_db()
+
+    # আগের value নাও
+    current_row = conn.execute(
+        "SELECT tasks_paid FROM tasks_paid_current WHERE id=1"
+    ).fetchone()
+    old_val = current_row["tasks_paid"] if current_row else 0
+
+    # Update current
+    conn.execute(
+        "UPDATE tasks_paid_current SET tasks_paid=?, updated_at=? WHERE id=1",
+        (new_val, now)
+    )
+
+    # বাড়লে log করো
+    diff = new_val - old_val
+    if diff > 0:
+        conn.execute(
+            "INSERT INTO tasks_paid_log (tasks_paid, diff, logged_at) VALUES (?, ?, ?)",
+            (new_val, diff, now)
+        )
+        print(f"[TasksPaid] +{diff} → {new_val:,}")
+
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "diff": diff})
+
+
+@app.route("/api/tasks-paid", methods=["GET"])
+def get_tasks_paid():
+    """latest.html এ দেখাবে — current value + last 10 logs"""
+    conn = get_db()
+    current = conn.execute(
+        "SELECT tasks_paid, updated_at FROM tasks_paid_current WHERE id=1"
+    ).fetchone()
+    logs = conn.execute(
+        "SELECT tasks_paid, diff, logged_at FROM tasks_paid_log ORDER BY id DESC LIMIT 10"
+    ).fetchall()
+    conn.close()
+    return jsonify({
+        "tasks_paid": current["tasks_paid"] if current else 0,
+        "updated_at": current["updated_at"] if current else "",
+        "logs": [dict(r) for r in logs]
     })
 
 
@@ -302,20 +384,15 @@ def check_link():
     url = request.args.get("url", "").strip()
     if not url:
         return jsonify({"found": False, "campaign": None})
-
-    # Extract task ID from URL end (e.g. "f8c620cdb682_HG")
     task_id = url.rstrip("/").split("/")[-1]
-
     conn = get_db()
     rows = conn.execute("SELECT job_name, link FROM jobs").fetchall()
     conn.close()
-
     for row in rows:
         db_link    = (row["link"] or "").rstrip("/")
         db_task_id = db_link.split("/")[-1]
         if db_task_id and db_task_id == task_id:
             return jsonify({"found": True, "campaign": row["job_name"]})
-
     return jsonify({"found": False, "campaign": None})
 
 
@@ -328,46 +405,32 @@ def heartbeat():
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"ok": False, "blocked": False}), 400
-
     device_id    = str(data.get("device_id",    "") or "").strip()
     device_name  = str(data.get("device_name",  "") or "Unknown").strip()
     license_key  = str(data.get("license_key",  "") or "").strip()
     license_type = str(data.get("license_type", "") or "").strip()
     ip_address   = request.headers.get("X-Forwarded-For", request.remote_addr or "")
     now          = datetime.now().isoformat()
-
     if not device_id:
         return jsonify({"ok": False, "blocked": False, "reason": "no device_id"}), 400
-
     conn = get_db()
-    existing = conn.execute(
-        "SELECT * FROM devices WHERE device_id=?", (device_id,)
-    ).fetchone()
-
+    existing = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
     if existing:
         conn.execute("""
-            UPDATE devices SET
-                device_name  = ?,
-                license_key  = ?,
-                license_type = ?,
-                ip_address   = ?,
-                last_seen    = ?
-            WHERE device_id = ?
+            UPDATE devices SET device_name=?, license_key=?, license_type=?, ip_address=?, last_seen=?
+            WHERE device_id=?
         """, (device_name, license_key, license_type, ip_address, now, device_id))
         is_blocked   = bool(existing["is_blocked"])
         block_reason = existing["block_reason"] or ""
     else:
         conn.execute("""
-            INSERT INTO devices
-                (device_id, device_name, license_key, license_type, ip_address, first_seen, last_seen, is_blocked)
+            INSERT INTO devices (device_id, device_name, license_key, license_type, ip_address, first_seen, last_seen, is_blocked)
             VALUES (?, ?, ?, ?, ?, ?, ?, 0)
         """, (device_id, device_name, license_key, license_type, ip_address, now, now))
         is_blocked   = False
         block_reason = ""
-
     conn.commit()
     conn.close()
-
     if is_blocked:
         return jsonify({"ok": False, "blocked": True, "reason": block_reason or "আপনার device block করা হয়েছে।"})
     return jsonify({"ok": True, "blocked": False})
@@ -376,17 +439,12 @@ def heartbeat():
 @app.route("/api/check/<device_id>", methods=["GET"])
 def check_device(device_id):
     conn = get_db()
-    row = conn.execute(
-        "SELECT is_blocked, block_reason FROM devices WHERE device_id=?", (device_id,)
-    ).fetchone()
+    row = conn.execute("SELECT is_blocked, block_reason FROM devices WHERE device_id=?", (device_id,)).fetchone()
     conn.close()
     if not row:
         return jsonify({"ok": True, "blocked": False})
     if row["is_blocked"]:
-        return jsonify({
-            "ok": False, "blocked": True,
-            "reason": row["block_reason"] or "আপনার device block করা হয়েছে।"
-        })
+        return jsonify({"ok": False, "blocked": True, "reason": row["block_reason"] or "আপনার device block করা হয়েছে।"})
     return jsonify({"ok": True, "blocked": False})
 
 
@@ -400,38 +458,25 @@ def license_verify():
     license_key = str(data.get("license_key", "") or "").strip()
     device_id   = str(data.get("device_id",   "") or "").strip()
     device_name = str(data.get("device_name", "") or "Unknown").strip()
-
     if not license_key or not device_id:
         return jsonify({"ok": False, "valid": False, "message": "❌ Missing license_key or device_id"}), 400
-
     conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM license_keys WHERE license_key=?", (license_key,)
-    ).fetchone()
-
+    row = conn.execute("SELECT * FROM license_keys WHERE license_key=?", (license_key,)).fetchone()
     if not row:
         conn.close()
         return jsonify({"ok": False, "valid": False, "message": "❌ Invalid License Key!"})
-
     if not row["is_active"]:
         conn.close()
         return jsonify({"ok": False, "valid": False, "message": "❌ This license key has been deactivated!"})
-
     bound = row["bound_device"]
     now   = datetime.now().isoformat()
-
     if bound and bound != device_id:
         conn.close()
-        return jsonify({
-            "ok": False, "valid": False,
-            "message": "❌ This license key is already activated on another device! Contact admin."
-        })
-
+        return jsonify({"ok": False, "valid": False, "message": "❌ This license key is already activated on another device! Contact admin."})
     remaining = days_remaining(row["expires_at"])
     if remaining is not None and remaining < 0:
         conn.close()
         return jsonify({"ok": False, "valid": False, "message": "❌ This license key has expired! Contact admin."})
-
     if not bound:
         expires_at    = None
         validity_days = row["validity_days"]
@@ -442,18 +487,10 @@ def license_verify():
             (device_id, now, expires_at, license_key)
         )
         conn.commit()
-
     label        = row["label"] or "License Key Active"
     display_name = row["display_name"] or label
     conn.close()
-
-    return jsonify({
-        "ok":           True,
-        "valid":        True,
-        "message":      f"✅ License Activated! ({label})",
-        "license_type": label,
-        "display_name": display_name,
-    })
+    return jsonify({"ok": True, "valid": True, "message": f"✅ License Activated! ({label})", "license_type": label, "display_name": display_name})
 
 
 @app.route("/api/license/unbind", methods=["POST"])
@@ -465,18 +502,11 @@ def license_unbind():
     if not license_key:
         return jsonify({"error": "license_key required"}), 400
     conn = get_db()
-    conn.execute(
-        "UPDATE license_keys SET bound_device=NULL, activated_at=NULL WHERE license_key=?",
-        (license_key,)
-    )
+    conn.execute("UPDATE license_keys SET bound_device=NULL, activated_at=NULL WHERE license_key=?", (license_key,))
     conn.commit()
     conn.close()
     return jsonify({"ok": True, "message": "Key unbound successfully"})
 
-
-# ══════════════════════════════════════════════════════════
-#  ADMIN LICENSE ROUTES
-# ══════════════════════════════════════════════════════════
 
 @app.route("/api/admin/licenses", methods=["GET"])
 def admin_get_licenses():
@@ -504,22 +534,16 @@ def admin_generate_license():
     count         = max(1, min(int(data.get("count", 1)), 50))
     validity_days = data.get("validity_days")
     expires_at    = None
-
     if validity_days:
-        try:
-            validity_days = int(validity_days)
-        except:
-            validity_days = None
-
+        try: validity_days = int(validity_days)
+        except: validity_days = None
     fixed_expires = str(data.get("expires_at", "") or "").strip()
     if fixed_expires:
         try:
             datetime.fromisoformat(fixed_expires)
             expires_at    = fixed_expires
             validity_days = None
-        except:
-            pass
-
+        except: pass
     now  = datetime.now().isoformat()
     conn = get_db()
     generated = []
@@ -528,15 +552,12 @@ def admin_generate_license():
         while conn.execute("SELECT 1 FROM license_keys WHERE license_key=?", (key,)).fetchone():
             key = generate_license_key(label)
         conn.execute(
-            """INSERT INTO license_keys
-               (license_key, label, display_name, max_devices, validity_days, expires_at, created_at, is_active)
-               VALUES (?,?,?,?,?,?,?,1)""",
+            "INSERT INTO license_keys (license_key, label, display_name, max_devices, validity_days, expires_at, created_at, is_active) VALUES (?,?,?,?,?,?,?,1)",
             (key, label, display_name, max_devices, validity_days, expires_at, now)
         )
         generated.append(key)
     conn.commit()
     conn.close()
-    print(f"[LICENSE] Generated {count} key(s) — label:{label or 'none'} validity:{validity_days or 'lifetime'}")
     return jsonify({"ok": True, "keys": generated})
 
 
@@ -566,23 +587,14 @@ def admin_update_license():
     label         = str(data.get("label",        "") or "").strip()
     expires_at    = str(data.get("expires_at",   "") or "").strip() or None
     validity_days = data.get("validity_days")
-
     if not license_key:
         return jsonify({"error": "license_key required"}), 400
     if validity_days is not None:
-        try:
-            validity_days = int(validity_days)
-        except:
-            validity_days = None
-
+        try: validity_days = int(validity_days)
+        except: validity_days = None
     conn = get_db()
     conn.execute(
-        """UPDATE license_keys SET
-            display_name  = ?,
-            label         = CASE WHEN ? != '' THEN ? ELSE label END,
-            expires_at    = ?,
-            validity_days = ?
-           WHERE license_key = ?""",
+        "UPDATE license_keys SET display_name=?, label=CASE WHEN ? != '' THEN ? ELSE label END, expires_at=?, validity_days=? WHERE license_key=?",
         (display_name, label, label, expires_at, validity_days, license_key)
     )
     conn.commit()
@@ -605,18 +617,11 @@ def admin_delete_license():
     return jsonify({"ok": True})
 
 
-# ══════════════════════════════════════════════════════════
-#  RESTORE ENDPOINT (localStorage backup → server)
-# ══════════════════════════════════════════════════════════
-
 @app.route("/api/admin/licenses/restore", methods=["POST"])
 def admin_restore_license():
-    """Restore a single license from browser localStorage backup."""
     if not check_admin(request):
         return jsonify({"error": "Unauthorized"}), 401
-
     data = request.get_json(silent=True) or {}
-
     license_key   = str(data.get("license_key",  "") or "").strip()
     label         = str(data.get("label",         "") or "").strip()
     display_name  = str(data.get("display_name",  "") or "").strip()
@@ -627,36 +632,22 @@ def admin_restore_license():
     expires_at    = str(data.get("expires_at",    "") or "").strip() or None
     validity_days = data.get("validity_days")
     is_active     = int(data.get("is_active", 1))
-
     if not license_key:
         return jsonify({"error": "license_key required"}), 400
-
     if validity_days is not None:
-        try:
-            validity_days = int(validity_days)
-        except:
-            validity_days = None
-
+        try: validity_days = int(validity_days)
+        except: validity_days = None
     conn = get_db()
-    existing = conn.execute(
-        "SELECT 1 FROM license_keys WHERE license_key=?", (license_key,)
-    ).fetchone()
-
+    existing = conn.execute("SELECT 1 FROM license_keys WHERE license_key=?", (license_key,)).fetchone()
     if existing:
         conn.close()
         return jsonify({"ok": True, "skipped": True, "message": "Already exists"})
-
     conn.execute(
-        """INSERT INTO license_keys
-           (license_key, label, display_name, max_devices, bound_device,
-            created_at, activated_at, expires_at, validity_days, is_active)
-           VALUES (?,?,?,?,?,?,?,?,?,?)""",
-        (license_key, label, display_name, max_devices, bound_device,
-         created_at, activated_at, expires_at, validity_days, is_active)
+        "INSERT INTO license_keys (license_key, label, display_name, max_devices, bound_device, created_at, activated_at, expires_at, validity_days, is_active) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (license_key, label, display_name, max_devices, bound_device, created_at, activated_at, expires_at, validity_days, is_active)
     )
     conn.commit()
     conn.close()
-    print(f"[RESTORE] Key restored: {license_key[:24]}... label={label}")
     return jsonify({"ok": True, "restored": True})
 
 
@@ -683,13 +674,9 @@ def set_announcement():
     message = str(data.get("message", "") or "").strip()
     now     = datetime.now().isoformat()
     conn = get_db()
-    conn.execute(
-        "UPDATE announcement SET enabled=?, message=?, updated_at=? WHERE id=1",
-        (enabled, message, now)
-    )
+    conn.execute("UPDATE announcement SET enabled=?, message=?, updated_at=? WHERE id=1", (enabled, message, now))
     conn.commit()
     conn.close()
-    print(f"[ANN] enabled={enabled} msg={message[:60]}")
     return jsonify({"ok": True})
 
 
