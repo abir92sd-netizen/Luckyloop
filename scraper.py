@@ -5,8 +5,8 @@ import os
 from bs4 import BeautifulSoup
 from datetime import datetime
 
-SERVER_URL = "https://luckyloop-position-update-16-05-gmd8.onrender.com"
-PHPSESSID  = os.environ.get("MW_PHPSESSID", "gp0ht2241r8a548pdme6enal96")
+SERVER_URL = "https://luckyloop-q9kk.onrender.com"
+PHPSESSID  = os.environ.get("MW_PHPSESSID", "0pt97dkfbvbvh688muaol6f61a")
 
 JOB_NAMES = [
     {"full": "TTV-Data Entry - PC required. Not for mobile phones. (E766-1470)", "short": "1470"},
@@ -150,7 +150,7 @@ def scrape_tasks_paid():
 def scrape_loop():
     print("[Scraper] Starting — checking at sec 2, 4, 33...")
     time.sleep(5)
-    CHECK_SECONDS = {2, 4, 33}
+    CHECK_SECONDS = {3, 33}
     last_checked_sec = -1
 
     # Tasks paid — আলাদা counter
