@@ -79,12 +79,9 @@
         #emptyMsg { padding: 60px; text-align: center; color: #2a2a2a; font-size: 15px; display: none; }
         #toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); background: var(--green); color: #000; padding: 9px 22px; border-radius: 6px; font-weight: bold; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 9999; }
 
-        /* ── Tasks Paid Card ── */
-        .tasks-paid-num { font-size: 20px; font-weight: bold; color: var(--green); margin-top: 5px; letter-spacing: 1px; }
-        .tasks-paid-log { margin-top: 8px; border-top: 1px solid #1a1a1a; padding-top: 6px; }
-        .tp-log-item { display: flex; justify-content: space-between; font-size: 11px; padding: 3px 0; border-bottom: 1px solid #111; }
-        .tp-diff { color: #00ff90; font-weight: bold; }
-        .tp-time { color: #444; font-size: 10px; }
+        .tp-log-item { display:flex; justify-content:space-between; font-size:11px; padding:3px 0; border-bottom:1px solid #111; }
+        .tp-diff { color:#00ff90; font-weight:bold; }
+        .tp-time { color:#444; font-size:10px; }
 
         footer {
             text-align: center;
@@ -121,6 +118,11 @@
     <div class="stat"><div class="stat-label">Has Slots</div><div class="stat-value" id="sAvail">–</div></div>
     <div class="stat"><div class="stat-label">Full / Zero</div><div class="stat-value" id="sFull">–</div></div>
     <div class="stat" style="min-width:180px;"><div class="stat-label">Last Sync</div><div class="stat-value" style="font-size:15px;margin-top:9px;" id="sSync">–</div></div>
+    <div class="stat" style="min-width:260px;">
+        <div class="stat-label">Tasks Paid</div>
+        <div style="font-size:20px;font-weight:bold;color:var(--green);margin-top:5px;letter-spacing:1px;" id="sTasksPaid">–</div>
+        <div id="sTasksLog" style="margin-top:8px;border-top:1px solid #1a1a1a;padding-top:6px;"></div>
+    </div>
 </div>
 <div class="content">
     <div class="toolbar">
@@ -176,7 +178,7 @@
             if (s < 3600)  return Math.floor(s/60) + 'm ago';
             if (s < 86400) return Math.floor(s/3600) + 'h ago';
             return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-        } catch { return ''; }
+        } catch(e) { return ''; }
     }
 
     async function fetchTasksPaid() {
@@ -185,19 +187,21 @@
             if (!res.ok) return;
             const data = await res.json();
             const val = data.tasks_paid || 0;
-            document.getElementById('sTasksPaid').textContent =
-                val > 0 ? Number(val).toLocaleString('en-US') : '–';
+            const el = document.getElementById('sTasksPaid');
+            if (el) el.textContent = val > 0 ? Number(val).toLocaleString('en-US') : '–';
             const logs = data.logs || [];
             const logEl = document.getElementById('sTasksLog');
-            if (logs.length > 0) {
-                logEl.innerHTML = logs.map(l =>
-                    '<div class="tp-log-item">' +
-                    '<span class="tp-diff">+' + Number(l.diff).toLocaleString() + '</span>' +
-                    '<span class="tp-time">' + tpTimeAgo(l.logged_at) + '</span>' +
-                    '</div>'
-                ).join('');
-            } else {
-                logEl.innerHTML = '<div style="color:#333;font-size:11px;padding:4px 0;">পরিবর্তন হলে এখানে দেখাবে</div>';
+            if (logEl) {
+                if (logs.length > 0) {
+                    logEl.innerHTML = logs.map(l =>
+                        '<div class="tp-log-item">' +
+                        '<span class="tp-diff">+' + Number(l.diff).toLocaleString() + '</span>' +
+                        '<span class="tp-time">' + tpTimeAgo(l.logged_at) + '</span>' +
+                        '</div>'
+                    ).join('');
+                } else {
+                    logEl.innerHTML = '<div style="color:#333;font-size:11px;padding:4px 0;">পরিবর্তন হলে এখানে দেখাবে</div>';
+                }
             }
         } catch(e) { console.warn('[TasksPaid]', e); }
     }
