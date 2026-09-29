@@ -79,9 +79,16 @@
         #emptyMsg { padding: 60px; text-align: center; color: #2a2a2a; font-size: 15px; display: none; }
         #toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); background: var(--green); color: #000; padding: 9px 22px; border-radius: 6px; font-weight: bold; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 9999; }
 
-        .tp-log-item { display:flex; justify-content:space-between; font-size:11px; padding:3px 0; border-bottom:1px solid #111; }
+        .tp-log-item { display:grid; grid-template-columns:60px 1fr 1fr; gap:8px; font-size:11px; padding:4px 0; border-bottom:1px solid #111; align-items:center; }
         .tp-diff { color:#00ff90; font-weight:bold; }
-        .tp-time { color:#444; font-size:10px; }
+        .tp-datetime { color:#333; font-size:10px; }
+        .tp-ago { color:#444; font-size:10px; text-align:right; }
+        #tpHistModal.active { display:flex !important; }
+        .tp-hist-row { display:grid; grid-template-columns:70px 1fr 1fr 80px; gap:8px; padding:5px 0; border-bottom:1px solid #111; }
+        .tp-hist-diff { color:#00ff90; font-weight:bold; }
+        .tp-hist-date { color:#444; }
+        .tp-hist-time { color:#333; }
+        .tp-hist-ago  { color:#2a2a2a; text-align:right; }
 
         footer {
             text-align: center;
@@ -118,10 +125,25 @@
     <div class="stat"><div class="stat-label">Has Slots</div><div class="stat-value" id="sAvail">–</div></div>
     <div class="stat"><div class="stat-label">Full / Zero</div><div class="stat-value" id="sFull">–</div></div>
     <div class="stat" style="min-width:180px;"><div class="stat-label">Last Sync</div><div class="stat-value" style="font-size:15px;margin-top:9px;" id="sSync">–</div></div>
-    <div class="stat" style="min-width:260px;">
-        <div class="stat-label">Tasks Paid</div>
+    <div class="stat" style="min-width:300px;">
+        <div class="stat-label" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Tasks Paid</span>
+            <button onclick="showTPHistory()" style="font-size:10px;padding:2px 8px;background:transparent;border:1px solid #222;border-radius:4px;color:#444;cursor:pointer;font-family:inherit;" id="histBtn" title="History">📋 History</button>
+        </div>
         <div style="font-size:20px;font-weight:bold;color:var(--green);margin-top:5px;letter-spacing:1px;" id="sTasksPaid">–</div>
         <div id="sTasksLog" style="margin-top:8px;border-top:1px solid #1a1a1a;padding-top:6px;"></div>
+    </div>
+</div>
+
+<!-- History Modal -->
+<div id="tpHistModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9998;align-items:center;justify-content:center;">
+    <div style="background:#0e0e0e;border:1px solid #1e1e1e;border-top:2px solid var(--green);border-radius:10px;padding:24px;width:500px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <span style="color:var(--green);font-weight:bold;font-size:14px;">📋 Tasks Paid History</span>
+            <button onclick="document.getElementById('tpHistModal').style.display='none'" style="background:transparent;border:none;color:#555;cursor:pointer;font-size:18px;">✕</button>
+        </div>
+        <div id="tpHistList" style="overflow-y:auto;flex:1;font-size:12px;font-family:monospace;"></div>
+        <button onclick="clearTPHistory()" style="margin-top:12px;padding:7px;background:transparent;border:1px solid #2a0000;border-radius:5px;color:#553333;cursor:pointer;font-size:11px;font-family:inherit;">🗑 Clear History</button>
     </div>
 </div>
 <div class="content">
@@ -169,6 +191,38 @@
         setInterval(fetchTasksPaid, 60000);
     }
 
+    const TP_HISTORY_KEY = 'tp_history';
+    const TP_MAX = 500;
+
+    function tpLoadHistory() {
+        try { return JSON.parse(localStorage.getItem(TP_HISTORY_KEY) || '[]'); }
+        catch(e) { return []; }
+    }
+    function tpSaveHistory(hist) {
+        try { localStorage.setItem(TP_HISTORY_KEY, JSON.stringify(hist.slice(0, TP_MAX))); }
+        catch(e) {}
+    }
+    function tpAddToHistory(item) {
+        const hist = tpLoadHistory();
+        // duplicate check (same diff + same minute)
+        const lastMin = item.logged_at.slice(0, 16);
+        if (hist.some(h => h.logged_at && h.logged_at.slice(0,16) === lastMin && h.diff === item.diff)) return;
+        hist.unshift(item);
+        tpSaveHistory(hist);
+    }
+
+    function tpFormatDateTime(iso) {
+        if (!iso) return ['–', '–'];
+        try {
+            const d = new Date(iso.replace(' ','T') + (iso.includes('Z') ? '' : 'Z'));
+            const date = (d.getMonth()+1).toString().padStart(2,'0') + '/' + d.getDate().toString().padStart(2,'0');
+            const h = d.getHours(), m = d.getMinutes().toString().padStart(2,'0');
+            const ampm = h >= 12 ? 'pm' : 'am';
+            const h12 = (h % 12 || 12) + ':' + m + ampm;
+            return [date, h12];
+        } catch(e) { return ['–', '–']; }
+    }
+
     function tpTimeAgo(iso) {
         if (!iso) return '';
         try {
@@ -177,8 +231,35 @@
             if (s < 60)    return Math.floor(s) + 's ago';
             if (s < 3600)  return Math.floor(s/60) + 'm ago';
             if (s < 86400) return Math.floor(s/3600) + 'h ago';
-            return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+            return Math.floor(s/86400) + 'd ago';
         } catch(e) { return ''; }
+    }
+
+    function showTPHistory() {
+        const hist = tpLoadHistory();
+        const listEl = document.getElementById('tpHistList');
+        if (!hist.length) {
+            listEl.innerHTML = '<div style="color:#333;padding:20px;text-align:center;">History নেই</div>';
+        } else {
+            listEl.innerHTML =
+                '<div class="tp-hist-row" style="color:#333;border-bottom:1px solid #1a1a1a;padding-bottom:4px;">' +
+                '<span>Diff</span><span>Date</span><span>Time</span><span style="text-align:right">When</span></div>' +
+                hist.map(l => {
+                    const [date, time] = tpFormatDateTime(l.logged_at);
+                    return '<div class="tp-hist-row">' +
+                        '<span class="tp-hist-diff">+' + Number(l.diff).toLocaleString() + '</span>' +
+                        '<span class="tp-hist-date">' + date + '</span>' +
+                        '<span class="tp-hist-time">' + time + '</span>' +
+                        '<span class="tp-hist-ago">' + tpTimeAgo(l.logged_at) + '</span>' +
+                        '</div>';
+                }).join('');
+        }
+        document.getElementById('tpHistModal').style.display = 'flex';
+    }
+
+    function clearTPHistory() {
+        localStorage.removeItem(TP_HISTORY_KEY);
+        document.getElementById('tpHistList').innerHTML = '<div style="color:#333;padding:20px;text-align:center;">Cleared!</div>';
     }
 
     async function fetchTasksPaid() {
@@ -189,19 +270,27 @@
             const val = data.tasks_paid || 0;
             const el = document.getElementById('sTasksPaid');
             if (el) el.textContent = val > 0 ? Number(val).toLocaleString('en-US') : '–';
+
             const logs = data.logs || [];
+            // Save to localStorage
+            logs.forEach(l => tpAddToHistory(l));
+
             const logEl = document.getElementById('sTasksLog');
-            if (logEl) {
-                if (logs.length > 0) {
-                    logEl.innerHTML = logs.map(l =>
-                        '<div class="tp-log-item">' +
+            if (!logEl) return;
+
+            const show = logs.slice(0, 5); // শুধু ৫টা
+            if (show.length > 0) {
+                logEl.innerHTML = show.map(l => {
+                    const [date, time] = tpFormatDateTime(l.logged_at);
+                    const ago = tpTimeAgo(l.logged_at);
+                    return '<div class="tp-log-item">' +
                         '<span class="tp-diff">+' + Number(l.diff).toLocaleString() + '</span>' +
-                        '<span class="tp-time">' + tpTimeAgo(l.logged_at) + '</span>' +
-                        '</div>'
-                    ).join('');
-                } else {
-                    logEl.innerHTML = '<div style="color:#333;font-size:11px;padding:4px 0;">পরিবর্তন হলে এখানে দেখাবে</div>';
-                }
+                        '<span class="tp-datetime">' + date + ' ' + time + '</span>' +
+                        '<span class="tp-ago">' + ago + '</span>' +
+                        '</div>';
+                }).join('');
+            } else {
+                logEl.innerHTML = '<div style="color:#333;font-size:11px;padding:4px 0;">পরিবর্তন হলে এখানে দেখাবে</div>';
             }
         } catch(e) { console.warn('[TasksPaid]', e); }
     }
