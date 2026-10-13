@@ -4,6 +4,9 @@ import threading
 import os
 from bs4 import BeautifulSoup
 from datetime import datetime
+import functools
+
+print = functools.partial(print, flush=True)
 
 SERVER_URL = "https://luckyloop-q9kk.onrender.com"
 PHPSESSID  = os.environ.get("MW_PHPSESSID", "ugss18vhdtgjjmq3prs1n8j5ka")
@@ -12,20 +15,26 @@ PHPSESSID  = os.environ.get("MW_PHPSESSID", "ugss18vhdtgjjmq3prs1n8j5ka")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
 last_paid = None
 
-def notify_paid(old, new):
-    """Tasks paid বাড়লে ফোনে নোটিফিকেশন পাঠাও"""
+def send_ntfy(title, message):
     if not NTFY_TOPIC:
-        return
+        print("[ntfy] NTFY_TOPIC is NOT set - notification skipped")
+        return False
     try:
-        requests.post(
+        r = requests.post(
             f"https://ntfy.sh/{NTFY_TOPIC}",
-            data=f"{old:,} -> {new:,} (+{new - old})".encode("utf-8"),
-            headers={"Title": "Microworkers Task Paid!", "Priority": "high"},
+            data=message.encode("utf-8"),
+            headers={"Title": title, "Priority": "high"},
             timeout=10,
         )
-        print(f"[ntfy] Sent: +{new - old}")
+        print(f"[ntfy] Sent '{message}' -> HTTP {r.status_code}")
+        return r.status_code == 200
     except Exception as e:
         print(f"[ntfy] Error: {e}")
+        return False
+
+def notify_paid(old, new):
+    """Tasks paid বাড়লে ফোনে নোটিফিকেশন পাঠাও"""
+    send_ntfy("Microworkers Task Paid!", f"{old:,} -> {new:,} (+{new - old})")
 
 def check_paid_change(new):
     """আগের সংখ্যার সাথে তুলনা করো, বাড়লে নোটিফিকেশন দাও"""
@@ -179,6 +188,8 @@ def scrape_tasks_paid():
 
 def scrape_loop():
     print("[Scraper] Starting — checking at sec 2, 4, 33...")
+    print(f"[ntfy] NTFY_TOPIC set: {bool(NTFY_TOPIC)}")
+    send_ntfy("Scraper started", "LuckyLoop scraper চালু হয়েছে (test)")
     time.sleep(5)
     CHECK_SECONDS = {3, 33}
     last_checked_sec = -1
