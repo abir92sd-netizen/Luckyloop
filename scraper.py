@@ -12,7 +12,7 @@ SERVER_URL = "https://luckyloop-q9kk.onrender.com"
 PHPSESSID  = os.environ.get("MW_PHPSESSID", "ugss18vhdtgjjmq3prs1n8j5ka")
 
 # ── ntfy নোটিফিকেশন ──────────────────────────────────
-NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 last_paid = None
 
 def send_ntfy(title, message):
