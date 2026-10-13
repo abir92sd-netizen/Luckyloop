@@ -8,6 +8,33 @@ from datetime import datetime
 SERVER_URL = "https://luckyloop-q9kk.onrender.com"
 PHPSESSID  = os.environ.get("MW_PHPSESSID", "ugss18vhdtgjjmq3prs1n8j5ka")
 
+# ── ntfy নোটিফিকেশন ──────────────────────────────────
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
+last_paid = None
+
+def notify_paid(old, new):
+    """Tasks paid বাড়লে ফোনে নোটিফিকেশন পাঠাও"""
+    if not NTFY_TOPIC:
+        return
+    try:
+        requests.post(
+            f"https://ntfy.sh/{NTFY_TOPIC}",
+            data=f"{old:,} -> {new:,} (+{new - old})".encode("utf-8"),
+            headers={"Title": "Microworkers Task Paid!", "Priority": "high"},
+            timeout=10,
+        )
+        print(f"[ntfy] Sent: +{new - old}")
+    except Exception as e:
+        print(f"[ntfy] Error: {e}")
+
+def check_paid_change(new):
+    """আগের সংখ্যার সাথে তুলনা করো, বাড়লে নোটিফিকেশন দাও"""
+    global last_paid
+    if last_paid is not None and new > last_paid:
+        notify_paid(last_paid, new)
+    last_paid = new
+# ═════════════════════════════════════════════════════
+
 JOB_NAMES = [
     {"full": "TTV-Data Entry - PC required. Not for mobile phones. (E766-1470)", "short": "1470"},
     {"full": "TTV-Data Entry from images (E502-1033)",                            "short": "1033"},
@@ -133,6 +160,9 @@ def scrape_tasks_paid():
             return
 
         print(f"[TasksPaid] Current: {tasks_paid:,}")
+
+        # সংখ্যা বাড়লে ফোনে নোটিফিকেশন পাঠাও
+        check_paid_change(tasks_paid)
 
         # Server এ push করো
         try:
