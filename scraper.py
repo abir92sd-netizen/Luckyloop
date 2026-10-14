@@ -33,6 +33,24 @@ PO_PRIORITY = _int_env("PUSHOVER_PRIORITY", 2)     # 2 = জরুরি অ্�
 PO_RETRY    = max(_int_env("PUSHOVER_RETRY_SEC", 60), 30)      # কত সেকেন্ড পর পর বাজবে (সর্বনিম্ন ৩০)
 PO_EXPIRE   = min(_int_env("PUSHOVER_EXPIRE_SEC", 600), 10800) # কতক্ষণ পর্যন্ত বাজতে থাকবে (সর্বোচ্চ ৩ ঘণ্টা)
 
+# ── Pushover ON/OFF সুইচ (ওয়েবসাইটের বাটন থেকে নিয়ন্ত্রিত) ──
+_po_toggle_cache = {"enabled": True, "checked_at": 0}
+PO_TOGGLE_TTL = 5   # প্রতি ৫ সেকেন্ডে সার্ভার থেকে নতুন অবস্থা নেবে
+
+def pushover_enabled():
+    """সার্ভার থেকে Pushover ON/OFF অবস্থা নাও। সার্ভারে না পৌঁছালে শেষ জানা অবস্থা ব্যবহার করবে।"""
+    now = time.time()
+    if now - _po_toggle_cache["checked_at"] < PO_TOGGLE_TTL:
+        return _po_toggle_cache["enabled"]
+    try:
+        r = requests.get(f"{SERVER_URL}/api/pushover", timeout=5)
+        if r.status_code == 200:
+            _po_toggle_cache["enabled"] = bool(r.json().get("enabled", True))
+    except Exception as e:
+        print(f"[pushover-toggle] Error: {type(e).__name__}")
+    _po_toggle_cache["checked_at"] = now
+    return _po_toggle_cache["enabled"]
+
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()   # ঐচ্ছিক
 TG_CHAT  = os.environ.get("TELEGRAM_CHAT_ID", "").strip()     # ঐচ্ছিক
 
@@ -79,6 +97,10 @@ def send_telegram(message):
 def send_pushover(title, message, priority=None):
     if not PO_USER or not PO_TOKEN:
         return False
+    # ওয়েবসাইটে Pushover OFF থাকলে মেসেজ পাঠাবে না
+    if not pushover_enabled():
+        print("[pushover] OFF — message skipped")
+        return False
     prio = PO_PRIORITY if priority is None else priority
     data = {"token": PO_TOKEN, "user": PO_USER, "title": title,
             "message": message, "priority": prio}
@@ -122,6 +144,15 @@ def check_paid_change(new):
         return
     if time.time() - last_send_time < NOTIFY_INTERVAL:
         return
+
+    # Pushover OFF আর অন্য কোনো মাধ্যম নেই হলে: শুধু হিসাব এগিয়ে রাখো,
+    # যাতে ON করলে OFF থাকার সময়ের পুরনো বৃদ্ধি একসাথে না যায়
+    other_channels = bool(NTFY_TOPIC) or bool(TG_TOKEN and TG_CHAT)
+    if not pushover_enabled() and not other_channels:
+        last_sent_value = new
+        last_send_time = time.time()
+        return
+
     diff = new - last_sent_value
     if send_notification("Microworkers Task Paid!", f"{last_sent_value:,} -> {new:,} (+{diff})"):
         last_sent_value = new
