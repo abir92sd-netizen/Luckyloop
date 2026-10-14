@@ -13,35 +13,121 @@ PHPSESSID  = os.environ.get("MW_PHPSESSID", "ugss18vhdtgjjmq3prs1n8j5ka")
 
 # ── ntfy নোটিফিকেশন ──────────────────────────────────
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
-last_paid = None
+NTFY_TOKEN = os.environ.get("NTFY_TOKEN", "").strip()   # ঐচ্ছিক: ntfy অ্যাকাউন্টের access token
+# কত সেকেন্ড পর পর নোটিফিকেশন যাবে (মাঝের সব বৃদ্ধি একসাথে যোগ হয়ে যাবে)
+try:
+    NOTIFY_INTERVAL = int(os.environ.get("NOTIFY_INTERVAL_SEC", "600"))
+except ValueError:
+    NOTIFY_INTERVAL = 600
+
+# ── Pushover (মূল নোটিফিকেশন) ──
+PO_USER  = os.environ.get("PUSHOVER_USER_KEY", "").strip()
+PO_TOKEN = os.environ.get("PUSHOVER_APP_TOKEN", "").strip()
+PO_SOUND = os.environ.get("PUSHOVER_SOUND", "").strip()        # ঐচ্ছিক, যেমন: siren
+def _int_env(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+PO_PRIORITY = _int_env("PUSHOVER_PRIORITY", 2)     # 2 = জরুরি অ্যালার্ম (বারবার বাজে), 1 = high, 0 = সাধারণ
+PO_RETRY    = max(_int_env("PUSHOVER_RETRY_SEC", 60), 30)      # কত সেকেন্ড পর পর বাজবে (সর্বনিম্ন ৩০)
+PO_EXPIRE   = min(_int_env("PUSHOVER_EXPIRE_SEC", 600), 10800) # কতক্ষণ পর্যন্ত বাজতে থাকবে (সর্বোচ্চ ৩ ঘণ্টা)
+
+TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()   # ঐচ্ছিক
+TG_CHAT  = os.environ.get("TELEGRAM_CHAT_ID", "").strip()     # ঐচ্ছিক
+
+last_sent_value = None   # যে সংখ্যা পর্যন্ত নোটিফিকেশন সফলভাবে গেছে
+last_send_time = 0
 
 def send_ntfy(title, message):
     if not NTFY_TOPIC:
-        print("[ntfy] NTFY_TOPIC is NOT set - notification skipped")
         return False
+    headers = {"Title": title, "Priority": "max"}
+    if NTFY_TOKEN:
+        headers["Authorization"] = f"Bearer {NTFY_TOKEN}"
     try:
         r = requests.post(
             f"https://ntfy.sh/{NTFY_TOPIC}",
             data=message.encode("utf-8"),
-            headers={"Title": title, "Priority": "high"},
+            headers=headers,
             timeout=10,
         )
         print(f"[ntfy] Sent '{message}' -> HTTP {r.status_code}")
+        if r.status_code != 200:
+            print(f"[ntfy] Response: {r.text[:150]}")
         return r.status_code == 200
     except Exception as e:
         print(f"[ntfy] Error: {e}")
         return False
 
-def notify_paid(old, new):
-    """Tasks paid বাড়লে ফোনে নোটিফিকেশন পাঠাও"""
-    send_ntfy("Microworkers Task Paid!", f"{old:,} -> {new:,} (+{new - old})")
+def send_telegram(message):
+    """ঐচ্ছিক: সেট না থাকলে চুপচাপ বাদ"""
+    if not TG_TOKEN or not TG_CHAT:
+        return False
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+            json={"chat_id": TG_CHAT, "text": message},
+            timeout=10,
+        )
+        print(f"[telegram] HTTP {r.status_code}")
+        return r.status_code == 200
+    except Exception as e:
+        print(f"[telegram] Error: {type(e).__name__}")
+        return False
+
+def send_pushover(title, message, priority=None):
+    if not PO_USER or not PO_TOKEN:
+        return False
+    prio = PO_PRIORITY if priority is None else priority
+    data = {"token": PO_TOKEN, "user": PO_USER, "title": title,
+            "message": message, "priority": prio}
+    if prio == 2:
+        data["retry"] = PO_RETRY
+        data["expire"] = PO_EXPIRE
+    if PO_SOUND:
+        data["sound"] = PO_SOUND
+    try:
+        r = requests.post("https://api.pushover.net/1/messages.json", data=data, timeout=10)
+        print(f"[pushover] Sent '{message}' (priority {prio}) -> HTTP {r.status_code}")
+        if r.status_code != 200:
+            print(f"[pushover] Response: {r.text[:200]}")
+        return r.status_code == 200
+    except Exception as e:
+        print(f"[pushover] Error: {type(e).__name__}")
+        return False
+
+def send_notification(title, message, priority=None):
+    """Pushover, ntfy, Telegram - যেগুলো সেট করা আছে সবগুলোতে পাঠাও"""
+    results = [
+        send_pushover(title, message, priority),
+        send_ntfy(title, message),
+        send_telegram(f"{title}\n{message}"),
+    ]
+    if not (PO_USER and PO_TOKEN) and not NTFY_TOPIC and not (TG_TOKEN and TG_CHAT):
+        print("[notify] কোনো নোটিফিকেশন মাধ্যম সেট করা নেই")
+    return any(results)
 
 def check_paid_change(new):
-    """আগের সংখ্যার সাথে তুলনা করো, বাড়লে নোটিফিকেশন দাও"""
-    global last_paid
-    if last_paid is not None and new > last_paid:
-        notify_paid(last_paid, new)
-    last_paid = new
+    """সংখ্যা বাড়লে নোটিফিকেশন দাও। NOTIFY_INTERVAL সেকেন্ডের মধ্যে একবারের বেশি নয়।
+    পাঠাতে ব্যর্থ হলে বৃদ্ধিটা হারায় না, পরের চেকে আবার চেষ্টা করে।"""
+    global last_sent_value, last_send_time
+    if last_sent_value is None:
+        last_sent_value = new
+        return
+    if new < last_sent_value:
+        last_sent_value = new
+        return
+    if new == last_sent_value:
+        return
+    if time.time() - last_send_time < NOTIFY_INTERVAL:
+        return
+    diff = new - last_sent_value
+    if send_notification("Microworkers Task Paid!", f"{last_sent_value:,} -> {new:,} (+{diff})"):
+        last_sent_value = new
+        last_send_time = time.time()
+    else:
+        print("[notify] Failed, will retry on next check")
 # ═════════════════════════════════════════════════════
 
 JOB_NAMES = [
@@ -188,8 +274,8 @@ def scrape_tasks_paid():
 
 def scrape_loop():
     print("[Scraper] Starting — checking at sec 2, 4, 33...")
-    print(f"[ntfy] NTFY_TOPIC set: {bool(NTFY_TOPIC)}")
-    send_ntfy("Scraper started", "LuckyLoop scraper চালু হয়েছে (test)")
+    print(f"[notify] pushover: {bool(PO_USER and PO_TOKEN)} | ntfy: {bool(NTFY_TOPIC)} | telegram: {bool(TG_TOKEN and TG_CHAT)} | interval: {NOTIFY_INTERVAL}s | priority: {PO_PRIORITY}")
+    send_notification("Scraper started", "LuckyLoop scraper চালু হয়েছে (test)", priority=0)
     time.sleep(5)
     CHECK_SECONDS = {3, 33}
     last_checked_sec = -1
