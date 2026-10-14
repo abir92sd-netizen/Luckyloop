@@ -99,6 +99,16 @@ def init_db():
         )
     """)
 
+    # ── NEW: Pushover ON/OFF setting (default ON) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pushover_setting (
+            id         INTEGER PRIMARY KEY,
+            enabled    INTEGER DEFAULT 1,
+            updated_at TEXT
+        )
+    """)
+    c.execute("INSERT OR IGNORE INTO pushover_setting (id, enabled, updated_at) VALUES (1, 1, '')")
+
     # ── Migrate existing tables if columns missing ──
     cols = [row[1] for row in c.execute("PRAGMA table_info(jobs)")]
     if "updated_at" not in cols:
@@ -272,6 +282,38 @@ def get_tasks_paid():
         "updated_at": current["updated_at"] if current else "",
         "logs": [dict(r) for r in logs]
     })
+
+
+# ══════════════════════════════════════════════════════════
+#  PUSHOVER ON/OFF API — নতুন
+# ══════════════════════════════════════════════════════════
+
+@app.route("/api/pushover", methods=["GET"])
+def get_pushover():
+    """scraper.py ও latest.html দুটোই এটা পড়বে (শুধু true/false দেখায়)"""
+    conn = get_db()
+    row = conn.execute("SELECT enabled FROM pushover_setting WHERE id=1").fetchone()
+    conn.close()
+    return jsonify({"enabled": bool(row["enabled"]) if row else True})
+
+
+@app.route("/api/pushover", methods=["POST"])
+def set_pushover():
+    """শুধু লগইন করা viewer (বা admin) ON/OFF করতে পারবে"""
+    if not (is_viewer_logged_in() or check_admin(request)):
+        return jsonify({"error": "Unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    enabled = 1 if data.get("enabled") else 0
+    now = datetime.now().isoformat()
+    conn = get_db()
+    conn.execute(
+        "UPDATE pushover_setting SET enabled=?, updated_at=? WHERE id=1",
+        (enabled, now)
+    )
+    conn.commit()
+    conn.close()
+    print(f"[Pushover] {'ON' if enabled else 'OFF'}")
+    return jsonify({"ok": True, "enabled": bool(enabled)})
 
 
 # ══════════════════════════════════════════════════════════
