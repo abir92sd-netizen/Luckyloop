@@ -20,6 +20,12 @@ try:
 except ValueError:
     NOTIFY_INTERVAL = 600
 
+# নোটিফিকেশন পাঠাতে ওই সময়ের মধ্যে কমপক্ষে কত বৃদ্ধি লাগবে (এর কম হলে মেসেজ যাবে না)
+try:
+    MIN_NOTIFY_DIFF = int(os.environ.get("MIN_NOTIFY_DIFF", "10"))
+except ValueError:
+    MIN_NOTIFY_DIFF = 10
+
 # ── Pushover (মূল নোটিফিকেশন) ──
 PO_USER  = os.environ.get("PUSHOVER_USER_KEY", "").strip()
 PO_TOKEN = os.environ.get("PUSHOVER_APP_TOKEN", "").strip()
@@ -143,6 +149,14 @@ def check_paid_change(new):
     if new == last_sent_value:
         return
     if time.time() - last_send_time < NOTIFY_INTERVAL:
+        return
+
+    # এই সময়ের বৃদ্ধি MIN_NOTIFY_DIFF এর কম হলে মেসেজ পাঠাবে না,
+    # শুধু হিসাব এগিয়ে রেখে নতুন ১০ মিনিটের হিসাব শুরু করবে
+    if new - last_sent_value < MIN_NOTIFY_DIFF:
+        print(f"[notify] +{new - last_sent_value} (< {MIN_NOTIFY_DIFF}) — message skipped")
+        last_sent_value = new
+        last_send_time = time.time()
         return
 
     # Pushover OFF আর অন্য কোনো মাধ্যম নেই হলে: শুধু হিসাব এগিয়ে রাখো,
