@@ -39,6 +39,11 @@ PO_PRIORITY = _int_env("PUSHOVER_PRIORITY", 2)     # 2 = জরুরি অ্�
 PO_RETRY    = max(_int_env("PUSHOVER_RETRY_SEC", 60), 30)      # কত সেকেন্ড পর পর বাজবে (সর্বনিম্ন ৩০)
 PO_EXPIRE   = min(_int_env("PUSHOVER_EXPIRE_SEC", 600), 10800) # কতক্ষণ পর্যন্ত বাজতে থাকবে (সর্বোচ্চ ৩ ঘণ্টা)
 
+# একটা ঘটনার জন্য কতবার মেসেজ পাঠাবে ও কত সেকেন্ড পর পর (সাউন্ড টানা বাজানোর জন্য)
+# ১০ বার × ৬ সেকেন্ড ≈ ১ মিনিট। ১ দিলে শুধু একবার যাবে।
+PO_REPEAT_COUNT = min(max(_int_env("PUSHOVER_REPEAT_COUNT", 10), 1), 20)
+PO_REPEAT_GAP   = max(_int_env("PUSHOVER_REPEAT_GAP_SEC", 6), 3)
+
 # ── Pushover ON/OFF সুইচ (ওয়েবসাইটের বাটন থেকে নিয়ন্ত্রিত) ──
 _po_toggle_cache = {"enabled": True, "checked_at": 0}
 PO_TOGGLE_TTL = 5   # প্রতি ৫ সেকেন্ডে সার্ভার থেকে নতুন অবস্থা নেবে
@@ -107,7 +112,24 @@ def send_pushover(title, message, priority=None):
     if not pushover_enabled():
         print("[pushover] OFF — message skipped")
         return False
+    # টানা ~১ মিনিট বাজানোর জন্য: কয়েক সেকেন্ড পর পর একই মেসেজ আবার পাঠানো হয়
+    if priority is None and PO_REPEAT_COUNT > 1:
+        ok = _po_post(title, message, 1)
+        if ok:
+            threading.Thread(target=_po_repeat, args=(title, message), daemon=True).start()
+        return ok
     prio = PO_PRIORITY if priority is None else priority
+    return _po_post(title, message, prio)
+
+def _po_repeat(title, message):
+    for n in range(2, PO_REPEAT_COUNT + 1):
+        time.sleep(PO_REPEAT_GAP)
+        if not pushover_enabled():
+            print("[pushover] OFF — repeat stopped")
+            return
+        _po_post(title, message, 1)
+
+def _po_post(title, message, prio):
     data = {"token": PO_TOKEN, "user": PO_USER, "title": title,
             "message": message, "priority": prio}
     if prio == 2:
