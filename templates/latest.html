@@ -90,6 +90,13 @@
         .tp-hist-time { color:#333; }
         .tp-hist-ago  { color:#2a2a2a; text-align:right; }
 
+        /* Pushover ON/OFF button */
+        .tp-btns { display:flex; gap:6px; align-items:center; }
+        .po-btn { font-size:10px; padding:2px 8px; background:transparent; border-radius:4px; cursor:pointer; font-family:inherit; transition: all .2s; text-transform:none; letter-spacing:0; }
+        .po-btn.on  { border:1px solid #00ff90; color:#00ff90; background:#003920; }
+        .po-btn.off { border:1px solid #ff4444; color:#ff6060; background:#2a0000; }
+        .po-btn:disabled { opacity:.5; cursor:wait; }
+
         footer {
             text-align: center;
             padding: 22px;
@@ -128,7 +135,10 @@
     <div class="stat" style="min-width:300px;">
         <div class="stat-label" style="display:flex;justify-content:space-between;align-items:center;">
             <span>Tasks Paid</span>
-            <button onclick="showTPHistory()" style="font-size:10px;padding:2px 8px;background:transparent;border:1px solid #222;border-radius:4px;color:#444;cursor:pointer;font-family:inherit;" id="histBtn" title="History">📋 History</button>
+            <div class="tp-btns">
+                <button onclick="togglePO()" class="po-btn on" id="poBtn" title="Pushover notification ON/OFF">🔔 Pushover: ...</button>
+                <button onclick="showTPHistory()" style="font-size:10px;padding:2px 8px;background:transparent;border:1px solid #222;border-radius:4px;color:#444;cursor:pointer;font-family:inherit;" id="histBtn" title="History">📋 History</button>
+            </div>
         </div>
         <div style="font-size:20px;font-weight:bold;color:var(--green);margin-top:5px;letter-spacing:1px;" id="sTasksPaid">–</div>
         <div id="sTasksLog" style="margin-top:8px;border-top:1px solid #1a1a1a;padding-top:6px;"></div>
@@ -187,8 +197,54 @@
     function startDashboard() {
         fetchData();
         fetchTasksPaid();
+        loadPO();
         refreshTimer = setInterval(fetchData, 5000);
         setInterval(fetchTasksPaid, 60000);
+        setInterval(loadPO, 30000);
+    }
+
+    // ══════════ Pushover ON/OFF ══════════
+    let poOn = true;
+
+    function renderPO() {
+        const b = document.getElementById('poBtn');
+        if (!b) return;
+        b.textContent = poOn ? '🔔 Pushover: ON' : '🔕 Pushover: OFF';
+        b.className = 'po-btn ' + (poOn ? 'on' : 'off');
+    }
+
+    async function loadPO() {
+        try {
+            const res = await fetch('/api/pushover');
+            if (!res.ok) return;
+            const data = await res.json();
+            poOn = !!data.enabled;
+            renderPO();
+        } catch (e) { console.warn('[Pushover]', e); }
+    }
+
+    async function togglePO() {
+        const b = document.getElementById('poBtn');
+        const target = !poOn;
+        if (b) b.disabled = true;
+        try {
+            const res = await fetch('/api/pushover', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: target })
+            });
+            if (res.status === 401) { showToast('⚠ Session শেষ। আবার লগিন করুন।'); return; }
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            poOn = !!data.enabled;
+            renderPO();
+            showToast(poOn ? '🔔 Pushover ON' : '🔕 Pushover OFF');
+        } catch (e) {
+            showToast('❌ Failed');
+            console.warn('[Pushover]', e);
+        } finally {
+            if (b) b.disabled = false;
+        }
     }
 
     const TP_HISTORY_KEY = 'tp_history';
